@@ -57,6 +57,13 @@ event-graph --db /tmp/events.duckdb ingest --events /tmp/events.csv
 event-graph --db /tmp/events.duckdb related-events user:alice --hops 2 --limit 20
 ```
 
+Append new events without replacing the database:
+
+```bash
+event-graph generate-synthetic /tmp/events-new.csv --rows 10000
+event-graph --db /tmp/events.duckdb append-events --events /tmp/events-new.csv
+```
+
 Add context without mutating raw events:
 
 ```bash
@@ -120,6 +127,5 @@ event-graph --db /tmp/events.duckdb export memgraph-cypher /tmp/memgraph
 
 - Config-driven entity extraction from arbitrary schemas.
 - Parquet/Iceberg partition pruning.
-- Incremental append without full index rebuild.
 - Larger 10M+ event benchmark.
 - Adapters for security, agent traces, product analytics, audit logs, and ticket systems.

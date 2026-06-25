@@ -1,6 +1,7 @@
 from event_graph.engine import (
     add_edge,
     add_note,
+    append_events,
     connect,
     generate_synthetic_events,
     ingest_events,
@@ -49,3 +50,29 @@ def test_generic_events_can_be_indexed(tmp_path):
     events = related_events(conn, "user:alice", hops=2, limit=10)
     assert events
     assert "user:alice" in str(events)
+
+
+def test_generic_events_can_be_appended_incrementally(tmp_path):
+    first = tmp_path / "events1.csv"
+    second = tmp_path / "events2.csv"
+    generate_synthetic_events(first, 10)
+    second.write_text(
+        "\n".join(
+            [
+                "ts,src,dst,rel,details",
+                "2026-01-01T00:00:00Z,user:alice,ticket:INC-999,opened,late ticket",
+                "2026-01-01T00:00:01Z,ticket:INC-999,service:export,touched,late export",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    conn = connect()
+    ingest_events(conn, first)
+    result = append_events(conn, second)
+    assert result["events"] == 12
+    assert result["appended_events"] == 2
+    events = related_events(conn, "ticket:INC-999", hops=2, limit=10)
+    joined = "\n".join(str(item) for item in events)
+    assert "late ticket" in joined
+    assert "late export" in joined

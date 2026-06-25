@@ -7,6 +7,7 @@ from pathlib import Path
 from .engine import (
     add_edge,
     add_note,
+    append_events,
     append_logs,
     benchmark,
     benchmark_events,
@@ -55,6 +56,13 @@ def main(argv: list[str] | None = None) -> int:
     append = sub.add_parser("append", help="append logs and rebuild entity indexes")
     append.add_argument("--logs", type=Path, required=True)
     append.set_defaults(func="append")
+
+    append_events_parser = sub.add_parser(
+        "append-events",
+        help="append generic events and update graph indexes incrementally",
+    )
+    append_events_parser.add_argument("--events", type=Path, required=True)
+    append_events_parser.set_defaults(func="append_events")
 
     scan = sub.add_parser("malware-hits", help="security adapter: find malware-related events")
     scan.add_argument("--limit", type=int, default=50)
@@ -148,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(ingest_sources(conn, args.logs, args.threat_intel))
     elif args.func == "append":
         _print_json({"logs": append_logs(conn, args.logs)})
+    elif args.func == "append_events":
+        _print_json(append_events(conn, args.events))
     elif args.func == "malware_hits":
         _print_json(malware_hits(conn, args.limit))
     elif args.func == "related_events":

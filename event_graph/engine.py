@@ -167,6 +167,39 @@ def ingest_events(
     }
 
 
+def append_events(conn: duckdb.DuckDBPyConnection, events: str | Path) -> dict[str, int]:
+    if not _relation_exists(conn, "events"):
+        return ingest_events(conn, events)
+
+    reader = _reader_sql(events)
+    incoming_columns = {
+        row[0] for row in conn.execute(f"DESCRIBE SELECT * FROM {reader}").fetchall()
+    }
+    missing = sorted(GENERIC_EVENT_COLUMNS - incoming_columns)
+    if missing:
+        raise ValueError(f"event source is missing columns: {', '.join(missing)}")
+
+    offset = conn.execute("SELECT COALESCE(max(event_id), 0) FROM events").fetchone()[0]
+    conn.execute(
+        f"""
+        INSERT INTO events BY NAME
+        SELECT {offset} + row_number() OVER () AS event_id, *
+        FROM {reader}
+        """
+    )
+    append_event_edges(conn, offset)
+    append_event_entity_index(conn, offset)
+    return {
+        "events": conn.execute("SELECT count(*) FROM events").fetchone()[0],
+        "appended_events": conn.execute(
+            "SELECT count(*) FROM events WHERE event_id > ?",
+            [offset],
+        ).fetchone()[0],
+        "entity_edges": _relation_count(conn, "entity_edges"),
+        "entity_events": _relation_count(conn, "entity_events"),
+    }
+
+
 def append_logs(conn: duckdb.DuckDBPyConnection, logs: str | Path) -> int:
     offset = conn.execute("SELECT COALESCE(max(event_id), 0) FROM firewall_logs").fetchone()[0]
     conn.execute(
@@ -393,6 +426,42 @@ def materialize_event_entity_index(conn: duckdb.DuckDBPyConnection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS entity_events_entity_idx ON entity_events(entity)")
     conn.execute("CREATE INDEX IF NOT EXISTS entity_events_event_idx ON entity_events(event_id)")
+
+
+def append_event_edges(conn: duckdb.DuckDBPyConnection, min_event_id: int) -> None:
+    init_graph(conn)
+    conn.execute(
+        """
+        INSERT INTO entity_edges
+        SELECT DISTINCT src, dst, rel
+        FROM events
+        WHERE event_id > ?
+          AND src IS NOT NULL
+          AND dst IS NOT NULL
+          AND rel IS NOT NULL
+        EXCEPT
+        SELECT src, dst, rel
+        FROM entity_edges
+        """,
+        [min_event_id],
+    )
+
+
+def append_event_entity_index(conn: duckdb.DuckDBPyConnection, min_event_id: int) -> None:
+    init_graph(conn)
+    conn.execute(
+        """
+        INSERT INTO entity_events
+        SELECT DISTINCT src AS entity, event_id
+        FROM events
+        WHERE event_id > ? AND src IS NOT NULL
+        UNION
+        SELECT DISTINCT dst AS entity, event_id
+        FROM events
+        WHERE event_id > ? AND dst IS NOT NULL
+        """,
+        [min_event_id, min_event_id],
+    )
 
 
 def add_edge(
