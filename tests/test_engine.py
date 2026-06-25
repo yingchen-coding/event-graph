@@ -3,11 +3,14 @@ from event_graph.engine import (
     add_note,
     append_events,
     connect,
+    convert_agent_trace_jsonl,
     convert_macos_log_json,
     generate_file_events,
     generate_synthetic_events,
+    ingest_adapter_events,
     ingest_configured_events,
     ingest_events,
+    ingest_partitioned_events,
     load_sample,
     malware_hits,
     related_events,
@@ -154,3 +157,88 @@ def test_macos_log_json_can_be_converted_and_ingested(tmp_path):
     ingest_events(conn, output)
     events = related_events(conn, "process:backupd", hops=1, limit=10)
     assert "Backup started" in str(events)
+
+
+def test_builtin_adapters_cover_product_audit_and_tickets(tmp_path):
+    product = tmp_path / "product.csv"
+    audit = tmp_path / "audit.csv"
+    tickets = tmp_path / "tickets.csv"
+    product.write_text(
+        "ts,user_id,session_id,event_name,object_id,properties\n"
+        "2026-01-01T00:00:00Z,alice,s1,export_failed,report-1,timeout\n",
+        encoding="utf-8",
+    )
+    audit.write_text(
+        "ts,actor,action,resource,ip,details\n"
+        "2026-01-01T00:00:00Z,alice,deleted,file-1,10.0.0.5,cleanup\n",
+        encoding="utf-8",
+    )
+    tickets.write_text(
+        "ts,ticket_id,reporter,assignee,status,summary\n"
+        "2026-01-01T00:00:00Z,INC-1,alice,bob,open,export failed\n",
+        encoding="utf-8",
+    )
+
+    conn = connect()
+    assert ingest_adapter_events(conn, product, "product")["events"] == 3
+    assert "export_failed" in str(related_events(conn, "user:alice", hops=1, limit=10))
+
+    conn = connect()
+    assert ingest_adapter_events(conn, audit, "audit")["events"] == 2
+    assert "file-1" in str(related_events(conn, "actor:alice", hops=1, limit=10))
+
+    conn = connect()
+    assert ingest_adapter_events(conn, tickets, "ticket")["events"] == 3
+    assert "export failed" in str(related_events(conn, "ticket:INC-1", hops=1, limit=10))
+
+
+def test_agent_trace_jsonl_can_be_converted_and_ingested(tmp_path):
+    raw = tmp_path / "trace.jsonl"
+    output = tmp_path / "trace.csv"
+    raw.write_text(
+        "\n".join(
+            [
+                '{"type":"user","sessionId":"s1","timestamp":"2026-01-01T00:00:00Z",'
+                '"cwd":"/repo","message":{"role":"user","content":"please run tests"}}',
+                '{"type":"assistant","sessionId":"s1","timestamp":"2026-01-01T00:00:01Z",'
+                '"message":{"role":"assistant","model":"m","content":[{"type":"text","text":"ok"},'
+                '{"type":"tool_use","name":"pytest"}]}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    converted = convert_agent_trace_jsonl(raw, output)
+    assert converted["events"] == 4
+    conn = connect()
+    ingest_events(conn, output)
+    assert "pytest" in str(related_events(conn, "session:s1", hops=1, limit=10))
+
+
+def test_partitioned_parquet_ingest_filters_before_indexing(tmp_path):
+    csv_path = tmp_path / "events.csv"
+    parquet_dir = tmp_path / "events_parquet"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "ts,src,dst,rel,day,details",
+                "2026-01-01T00:00:00Z,user:alice,service:billing,used,2026-01-01,keep",
+                "2026-01-02T00:00:00Z,user:bob,service:search,used,2026-01-02,drop",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    conn = connect()
+    conn.execute(
+        f"""
+        COPY (
+          SELECT * FROM read_csv_auto('{csv_path}', header=true)
+        )
+        TO '{parquet_dir}' (FORMAT parquet, PARTITION_BY (day))
+        """
+    )
+    conn = connect()
+    result = ingest_partitioned_events(conn, parquet_dir, where="day = DATE '2026-01-01'")
+    assert result["events"] == 1
+    assert "keep" in str(related_events(conn, "user:alice", hops=1, limit=10))
+    assert not related_events(conn, "user:bob", hops=1, limit=10)

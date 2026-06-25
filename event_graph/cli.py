@@ -12,13 +12,16 @@ from .engine import (
     benchmark,
     benchmark_events,
     connect,
+    convert_agent_trace_jsonl,
     convert_macos_log_json,
     export_graph,
     generate_file_events,
     generate_synthetic_events,
     generate_synthetic_logs,
+    ingest_adapter_events,
     ingest_configured_events,
     ingest_events,
+    ingest_partitioned_events,
     ingest_sources,
     load_sample,
     malware_hits,
@@ -55,6 +58,22 @@ def main(argv: list[str] | None = None) -> int:
     ingest_config.add_argument("--source", type=Path, required=True)
     ingest_config.add_argument("--config", type=Path, required=True)
     ingest_config.set_defaults(func="ingest_config")
+
+    ingest_adapter = sub.add_parser(
+        "ingest-adapter",
+        help="ingest product, audit, or ticket events using a built-in mapping",
+    )
+    ingest_adapter.add_argument("adapter", choices=("product", "audit", "ticket"))
+    ingest_adapter.add_argument("--source", type=Path, required=True)
+    ingest_adapter.set_defaults(func="ingest_adapter")
+
+    ingest_parquet = sub.add_parser(
+        "ingest-parquet",
+        help="ingest partitioned Parquet event edges with optional SQL filter pushdown",
+    )
+    ingest_parquet.add_argument("--source", required=True)
+    ingest_parquet.add_argument("--where", default="")
+    ingest_parquet.set_defaults(func="ingest_parquet")
 
     ingest_sec = sub.add_parser(
         "ingest-security",
@@ -147,6 +166,12 @@ def main(argv: list[str] | None = None) -> int:
     macos.add_argument("--limit", type=int, default=100_000)
     macos.set_defaults(func="convert_macos_log")
 
+    agent_trace = sub.add_parser("convert-agent-trace", help="convert Claude-style JSONL traces")
+    agent_trace.add_argument("--input", type=Path, required=True)
+    agent_trace.add_argument("--output", type=Path, required=True)
+    agent_trace.add_argument("--limit", type=int, default=100_000)
+    agent_trace.set_defaults(func="convert_agent_trace")
+
     bench = sub.add_parser("benchmark", help="benchmark generic ingest and related-event lookup")
     bench.add_argument("--csv", type=Path, default=Path("/tmp/event_graph_benchmark.csv"))
     bench.add_argument("--rows", type=int, default=100_000)
@@ -177,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(ingest_events(conn, args.events))
     elif args.func == "ingest_config":
         _print_json(ingest_configured_events(conn, args.source, args.config))
+    elif args.func == "ingest_adapter":
+        _print_json(ingest_adapter_events(conn, args.source, args.adapter))
+    elif args.func == "ingest_parquet":
+        _print_json(ingest_partitioned_events(conn, args.source, where=args.where))
     elif args.func == "ingest_security":
         _print_json(ingest_sources(conn, args.logs, args.threat_intel))
     elif args.func == "append":
@@ -217,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(generate_file_events(args.root, args.output, max_files=args.max_files))
     elif args.func == "convert_macos_log":
         _print_json(convert_macos_log_json(args.input, args.output, limit=args.limit))
+    elif args.func == "convert_agent_trace":
+        _print_json(convert_agent_trace_jsonl(args.input, args.output, limit=args.limit))
     else:
         raise AssertionError(args.func)
     return 0

@@ -79,11 +79,36 @@ event-graph --db /tmp/activity.duckdb ingest-config \
   --config examples/activity_mapping.json
 ```
 
+Built-in adapters are available for common operational records:
+
+```bash
+event-graph --db /tmp/product.duckdb ingest-adapter product --source examples/product_events.csv
+event-graph --db /tmp/audit.duckdb ingest-adapter audit --source examples/audit_log.csv
+event-graph --db /tmp/tickets.duckdb ingest-adapter ticket --source examples/tickets.csv
+```
+
+Claude-style agent traces can be converted first, then ingested as generic event edges:
+
+```bash
+event-graph convert-agent-trace --input ~/.claude/projects/.../session.jsonl \
+  --output /tmp/agent-trace.csv
+event-graph --db /tmp/agent-trace.duckdb ingest --events /tmp/agent-trace.csv
+event-graph --db /tmp/agent-trace.duckdb related-events session:SESSION_ID --hops 1
+```
+
 Append new events without replacing the database:
 
 ```bash
 event-graph generate-synthetic /tmp/events-new.csv --rows 10000
 event-graph --db /tmp/events.duckdb append-events --events /tmp/events-new.csv
+```
+
+Partitioned Parquet can be filtered before indexing:
+
+```bash
+event-graph --db /tmp/events.duckdb ingest-parquet \
+  --source '/data/events/day=*/part-*.parquet' \
+  --where "day = DATE '2026-01-01'"
 ```
 
 ## Local Computer Events
@@ -134,6 +159,20 @@ event-graph --db /tmp/events.duckdb benchmark --rows 1000000 \
   --seed user:alice --hops 2 --limit 100
 ```
 
+10M-row local benchmark on this machine:
+
+```json
+{
+  "rows": 10000000,
+  "generated_seconds": 9.579,
+  "ingest_seconds": 8.635,
+  "query_millis": 2793.819,
+  "returned_events": 100,
+  "entity_edges": 4,
+  "entity_events": 20000000
+}
+```
+
 ## Security Adapter Example
 
 Security logs are one adapter, not the whole product.
@@ -178,6 +217,6 @@ event-graph --db /tmp/events.duckdb export memgraph-cypher /tmp/memgraph
 
 ## What To Build Next
 
-- Parquet/Iceberg partition pruning.
-- Larger 10M+ event benchmark.
-- More adapters for agent traces, product analytics, audit logs, and ticket systems.
+- Iceberg catalog integration.
+- Streaming ingest service around the append APIs.
+- Larger real-world public datasets for reproducible launch benchmarks.

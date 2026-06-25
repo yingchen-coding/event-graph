@@ -1,0 +1,3 @@
+ts,user_id,session_id,event_name,object_id,properties
+2026-01-01T00:00:00Z,alice,s1,export_clicked,report-1,"{format:pdf}"
+2026-01-01T00:00:01Z,alice,s1,export_failed,report-1,"{error:timeout}"

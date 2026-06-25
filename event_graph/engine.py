@@ -38,6 +38,34 @@ LOG_COLUMNS = [
 ]
 GENERIC_EVENT_COLUMNS = {"ts", "src", "dst", "rel"}
 _TEMPLATE_TOKEN = re.compile(r"\{([^{}]+)\}")
+BUILTIN_ADAPTERS: dict[str, dict[str, Any]] = {
+    "product": {
+        "timestamp": "{ts}",
+        "details": "{properties}",
+        "edges": [
+            {"src": "user:{user_id}", "rel": "performed", "dst": "event:{event_name}"},
+            {"src": "session:{session_id}", "rel": "contains", "dst": "event:{event_name}"},
+            {"src": "user:{user_id}", "rel": "touched", "dst": "object:{object_id}"},
+        ],
+    },
+    "audit": {
+        "timestamp": "{ts}",
+        "details": "{details}",
+        "edges": [
+            {"src": "actor:{actor}", "rel": "{action}", "dst": "resource:{resource}"},
+            {"src": "actor:{actor}", "rel": "from_ip", "dst": "ip:{ip}"},
+        ],
+    },
+    "ticket": {
+        "timestamp": "{ts}",
+        "details": "{summary}",
+        "edges": [
+            {"src": "user:{reporter}", "rel": "opened", "dst": "ticket:{ticket_id}"},
+            {"src": "ticket:{ticket_id}", "rel": "assigned_to", "dst": "user:{assignee}"},
+            {"src": "ticket:{ticket_id}", "rel": "has_status", "dst": "status:{status}"},
+        ],
+    },
+}
 
 
 def connect(database: str | Path = ":memory:") -> duckdb.DuckDBPyConnection:
@@ -47,6 +75,10 @@ def connect(database: str | Path = ":memory:") -> duckdb.DuckDBPyConnection:
 def _reader_sql(path: str | Path) -> str:
     source = str(path)
     escaped = source.replace("'", "''")
+    if "*" in source and source.endswith(".parquet"):
+        return f"read_parquet('{escaped}', hive_partitioning=true)"
+    if Path(source).is_dir():
+        return f"read_parquet('{escaped}/**/*.parquet', hive_partitioning=true)"
     suffix = Path(source).suffix.lower()
     if suffix == ".parquet":
         return f"read_parquet('{escaped}')"
@@ -236,6 +268,58 @@ def ingest_configured_events(
     }
 
 
+def ingest_adapter_events(
+    conn: duckdb.DuckDBPyConnection,
+    source: str | Path,
+    adapter: str,
+    *,
+    materialize: bool = True,
+) -> dict[str, int]:
+    if adapter not in BUILTIN_ADAPTERS:
+        choices = ", ".join(sorted(BUILTIN_ADAPTERS))
+        raise ValueError(f"unknown adapter: {adapter}; choices: {choices}")
+    return ingest_configured_events(
+        conn,
+        source,
+        BUILTIN_ADAPTERS[adapter],
+        materialize=materialize,
+    )
+
+
+def ingest_partitioned_events(
+    conn: duckdb.DuckDBPyConnection,
+    source: str | Path,
+    *,
+    where: str = "",
+    materialize: bool = True,
+) -> dict[str, int]:
+    reader = _reader_sql(source)
+    filter_sql = f"WHERE {where}" if where else ""
+    conn.execute(
+        f"""
+        CREATE OR REPLACE TABLE events AS
+        SELECT row_number() OVER () AS event_id, *
+        FROM (
+          SELECT *
+          FROM {reader}
+          {filter_sql}
+        )
+        """
+    )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info('events')").fetchall()}
+    missing = sorted(GENERIC_EVENT_COLUMNS - columns)
+    if missing:
+        raise ValueError(f"event source is missing columns: {', '.join(missing)}")
+    if materialize:
+        materialize_event_edges(conn)
+        materialize_event_entity_index(conn)
+    return {
+        "events": conn.execute("SELECT count(*) FROM events").fetchone()[0],
+        "entity_edges": _relation_count(conn, "entity_edges"),
+        "entity_events": _relation_count(conn, "entity_events"),
+    }
+
+
 def append_events(conn: duckdb.DuckDBPyConnection, events: str | Path) -> dict[str, int]:
     if not _relation_exists(conn, "events"):
         return ingest_events(conn, events)
@@ -353,6 +437,49 @@ def convert_macos_log_json(
                 ]
             )
             rows += 1
+    return {"path": str(output_path), "events": rows, "source": str(source)}
+
+
+def convert_agent_trace_jsonl(
+    source: str | Path,
+    output: str | Path,
+    *,
+    limit: int = 100_000,
+) -> dict[str, int | str]:
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = 0
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["ts", "src", "dst", "rel", "details"])
+        for item in _iter_json_records(Path(source)):
+            if rows >= limit:
+                break
+            session_id = str(item.get("sessionId") or item.get("session_id") or "unknown")
+            session = f"session:{session_id}"
+            timestamp = str(item.get("timestamp") or item.get("ts") or "")
+            cwd = str(item.get("cwd") or "")
+            message = item.get("message")
+            if cwd:
+                writer.writerow([timestamp, session, f"workspace:{cwd}", "ran_in", ""])
+                rows += 1
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or item.get("type") or "unknown")
+            content = message.get("content")
+            text = _extract_content_text(content)
+            if role == "user":
+                writer.writerow([timestamp, "user:local", session, "sent_message", text])
+                rows += 1
+            elif role == "assistant":
+                model = str(message.get("model") or "assistant")
+                writer.writerow([timestamp, f"assistant:{model}", session, "responded", text])
+                rows += 1
+            for tool_name in _extract_tool_names(content):
+                if rows >= limit:
+                    break
+                writer.writerow([timestamp, session, f"tool:{tool_name}", "used_tool", ""])
+                rows += 1
     return {"path": str(output_path), "events": rows, "source": str(source)}
 
 
@@ -998,6 +1125,32 @@ def _iter_json_records(path: Path) -> Iterable[dict[str, Any]]:
             continue
         if isinstance(item, dict):
             yield item
+
+
+def _extract_content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict) and isinstance(item.get("text"), str):
+            parts.append(item["text"])
+    return "\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def _extract_tool_names(content: Any) -> list[str]:
+    if not isinstance(content, list):
+        return []
+    names = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "tool_use" and item.get("name"):
+            names.append(str(item["name"]))
+    return names
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:

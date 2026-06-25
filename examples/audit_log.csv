@@ -1,0 +1,3 @@
+ts,actor,action,resource,ip,details
+2026-01-01T00:00:00Z,alice,deleted,file-1,10.0.0.5,removed stale file
+2026-01-01T00:00:01Z,bob,read,file-1,10.0.0.6,reviewed deletion
