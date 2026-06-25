@@ -1,0 +1,11 @@
+{
+  "timestamp": "{time}",
+  "details": "{message}",
+  "edges": [
+    {
+      "src": "user:{actor}",
+      "rel": "{verb}",
+      "dst": "object:{target}"
+    }
+  ]
+}

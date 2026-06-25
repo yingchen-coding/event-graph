@@ -57,11 +57,64 @@ event-graph --db /tmp/events.duckdb ingest --events /tmp/events.csv
 event-graph --db /tmp/events.duckdb related-events user:alice --hops 2 --limit 20
 ```
 
+## Arbitrary Schemas
+
+For logs that do not already have `ts,src,dst,rel`, provide a JSON mapping:
+
+```json
+{
+  "timestamp": "{time}",
+  "details": "{message}",
+  "edges": [
+    {"src": "user:{actor}", "rel": "{verb}", "dst": "ticket:{target}"}
+  ]
+}
+```
+
+Then ingest without rewriting the source file:
+
+```bash
+event-graph --db /tmp/activity.duckdb ingest-config \
+  --source /tmp/activity.csv \
+  --config examples/activity_mapping.json
+```
+
 Append new events without replacing the database:
 
 ```bash
 event-graph generate-synthetic /tmp/events-new.csv --rows 10000
 event-graph --db /tmp/events.duckdb append-events --events /tmp/events-new.csv
+```
+
+## Local Computer Events
+
+Filesystem metadata can be converted into event edges:
+
+```bash
+event-graph collect-files ~/Documents/repo /tmp/local-files.csv --max-files 10000
+event-graph --db /tmp/local.duckdb ingest --events /tmp/local-files.csv
+event-graph --db /tmp/local.duckdb related-events "ext:.py" --hops 2 --limit 20
+```
+
+macOS unified logs can be sampled with the system `log` command, converted, and queried:
+
+```bash
+/usr/bin/log show --last 2m --style json --info > /tmp/macos-log.json
+event-graph convert-macos-log --input /tmp/macos-log.json --output /tmp/macos-log.csv
+event-graph --db /tmp/macos.duckdb ingest --events /tmp/macos-log.csv
+event-graph --db /tmp/macos.duckdb search backupd
+```
+
+Observed local validation on a Mac mini:
+
+```json
+{
+  "filesystem_events": 5485,
+  "macos_log_events": 5000,
+  "generic_1m_ingest_seconds": 1.434,
+  "generic_1m_query_millis": 205.178,
+  "generic_1m_returned_events": 100
+}
 ```
 
 Add context without mutating raw events:
@@ -125,7 +178,6 @@ event-graph --db /tmp/events.duckdb export memgraph-cypher /tmp/memgraph
 
 ## What To Build Next
 
-- Config-driven entity extraction from arbitrary schemas.
 - Parquet/Iceberg partition pruning.
 - Larger 10M+ event benchmark.
-- Adapters for security, agent traces, product analytics, audit logs, and ticket systems.
+- More adapters for agent traces, product analytics, audit logs, and ticket systems.

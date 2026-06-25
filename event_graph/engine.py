@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import time
 import uuid
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +37,7 @@ LOG_COLUMNS = [
     "bytes",
 ]
 GENERIC_EVENT_COLUMNS = {"ts", "src", "dst", "rel"}
+_TEMPLATE_TOKEN = re.compile(r"\{([^{}]+)\}")
 
 
 def connect(database: str | Path = ":memory:") -> duckdb.DuckDBPyConnection:
@@ -167,6 +171,71 @@ def ingest_events(
     }
 
 
+def ingest_configured_events(
+    conn: duckdb.DuckDBPyConnection,
+    source: str | Path,
+    config: str | Path | dict[str, Any],
+    *,
+    materialize: bool = True,
+) -> dict[str, int]:
+    mapping = _load_mapping_config(config)
+    reader = _reader_sql(source)
+    columns = {row[0] for row in conn.execute(f"DESCRIBE SELECT * FROM {reader}").fetchall()}
+    edges = mapping.get("edges")
+    if not isinstance(edges, list) or not edges:
+        raise ValueError("config must contain a non-empty edges list")
+
+    timestamp_template = str(mapping.get("timestamp") or mapping.get("ts") or "")
+    details_template = str(mapping.get("details") or "")
+    selects = []
+    for edge in edges:
+        if not isinstance(edge, dict):
+            raise ValueError("each edge mapping must be an object")
+        for key in ("src", "dst", "rel"):
+            if key not in edge:
+                raise ValueError(f"edge mapping is missing {key}")
+        ts_expr = _template_to_sql(timestamp_template, columns) if timestamp_template else "NULL"
+        details_expr = _template_to_sql(details_template, columns) if details_template else "NULL"
+        src_expr = _template_to_sql(str(edge["src"]), columns)
+        dst_expr = _template_to_sql(str(edge["dst"]), columns)
+        rel_expr = _template_to_sql(str(edge["rel"]), columns)
+        selects.append(
+            f"""
+            SELECT *
+            FROM (
+              SELECT
+                {ts_expr} AS ts,
+                {src_expr} AS src,
+                {dst_expr} AS dst,
+                {rel_expr} AS rel,
+                {details_expr} AS details
+              FROM {reader}
+            )
+            WHERE src IS NOT NULL AND src != ''
+              AND dst IS NOT NULL AND dst != ''
+              AND rel IS NOT NULL AND rel != ''
+            """
+        )
+
+    conn.execute(
+        """
+        CREATE OR REPLACE TABLE events AS
+        SELECT row_number() OVER () AS event_id, *
+        FROM (
+        """
+        + "\nUNION ALL\n".join(selects)
+        + "\n)"
+    )
+    if materialize:
+        materialize_event_edges(conn)
+        materialize_event_entity_index(conn)
+    return {
+        "events": conn.execute("SELECT count(*) FROM events").fetchone()[0],
+        "entity_edges": _relation_count(conn, "entity_edges"),
+        "entity_events": _relation_count(conn, "entity_events"),
+    }
+
+
 def append_events(conn: duckdb.DuckDBPyConnection, events: str | Path) -> dict[str, int]:
     if not _relation_exists(conn, "events"):
         return ingest_events(conn, events)
@@ -198,6 +267,93 @@ def append_events(conn: duckdb.DuckDBPyConnection, events: str | Path) -> dict[s
         "entity_edges": _relation_count(conn, "entity_edges"),
         "entity_events": _relation_count(conn, "entity_events"),
     }
+
+
+def generate_file_events(
+    root: str | Path,
+    output: str | Path,
+    *,
+    max_files: int = 100_000,
+) -> dict[str, int | str]:
+    root_path = Path(root).expanduser().resolve()
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    files = 0
+    events = 0
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["ts", "src", "dst", "rel", "details", "size_bytes"])
+        for path in root_path.rglob("*"):
+            if files >= max_files:
+                break
+            if not path.is_file():
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            file_entity = f"file:{path}"
+            directory_entity = f"dir:{path.parent}"
+            ts = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+            files += 1
+            writer.writerow(
+                [
+                    ts,
+                    file_entity,
+                    directory_entity,
+                    "in_directory",
+                    path.name,
+                    stat.st_size,
+                ]
+            )
+            events += 1
+            if path.suffix:
+                writer.writerow(
+                    [
+                        ts,
+                        file_entity,
+                        f"ext:{path.suffix.lower()}",
+                        "has_extension",
+                        path.name,
+                        stat.st_size,
+                    ]
+                )
+                events += 1
+    return {"path": str(output_path), "files": files, "events": events, "root": str(root_path)}
+
+
+def convert_macos_log_json(
+    source: str | Path,
+    output: str | Path,
+    *,
+    limit: int = 100_000,
+) -> dict[str, int | str]:
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = 0
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["ts", "src", "dst", "rel", "details", "message_type"])
+        for item in _iter_json_records(Path(source)):
+            if rows >= limit:
+                break
+            process = str(item.get("process") or item.get("processImagePath") or "unknown")
+            subsystem = str(item.get("subsystem") or item.get("sender") or "unknown")
+            category = str(item.get("category") or item.get("eventType") or "log")
+            message = str(item.get("eventMessage") or item.get("message") or "")
+            timestamp = str(item.get("timestamp") or item.get("machTimestamp") or "")
+            writer.writerow(
+                [
+                    timestamp,
+                    f"process:{process}",
+                    f"log:{subsystem}:{category}",
+                    "emitted",
+                    message,
+                    str(item.get("messageType") or ""),
+                ]
+            )
+            rows += 1
+    return {"path": str(output_path), "events": rows, "source": str(source)}
 
 
 def append_logs(conn: duckdb.DuckDBPyConnection, logs: str | Path) -> int:
@@ -775,6 +931,73 @@ def _cypher_string(value: object) -> str:
 
 def json_escape(value: str) -> str:
     return json.dumps(value)
+
+
+def _load_mapping_config(config: str | Path | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(config, dict):
+        return config
+    with Path(config).open(encoding="utf-8") as handle:
+        loaded = json.load(handle)
+    if not isinstance(loaded, dict):
+        raise ValueError("config must be a JSON object")
+    return loaded
+
+
+def _template_to_sql(template: str, columns: set[str]) -> str:
+    parts: list[str] = []
+    position = 0
+    for match in _TEMPLATE_TOKEN.finditer(template):
+        literal = template[position : match.start()]
+        if literal:
+            parts.append(_sql_literal(literal))
+        column = match.group(1)
+        if column not in columns:
+            raise ValueError(f"template references missing column: {column}")
+        parts.append(f"COALESCE(CAST({_quote_identifier(column)} AS VARCHAR), '')")
+        position = match.end()
+    tail = template[position:]
+    if tail:
+        parts.append(_sql_literal(tail))
+    if not parts:
+        return "''"
+    if len(parts) == 1:
+        return parts[0]
+    return "concat(" + ", ".join(parts) + ")"
+
+
+def _quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _iter_json_records(path: Path) -> Iterable[dict[str, Any]]:
+    text = path.read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        return
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                yield item
+        return
+    if isinstance(payload, dict):
+        yield payload
+        return
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            yield item
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:

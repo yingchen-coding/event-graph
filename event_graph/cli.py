@@ -12,9 +12,12 @@ from .engine import (
     benchmark,
     benchmark_events,
     connect,
+    convert_macos_log_json,
     export_graph,
+    generate_file_events,
     generate_synthetic_events,
     generate_synthetic_logs,
+    ingest_configured_events,
     ingest_events,
     ingest_sources,
     load_sample,
@@ -44,6 +47,14 @@ def main(argv: list[str] | None = None) -> int:
     ingest = sub.add_parser("ingest", help="ingest generic event edges and materialize indexes")
     ingest.add_argument("--events", type=Path, required=True)
     ingest.set_defaults(func="ingest")
+
+    ingest_config = sub.add_parser(
+        "ingest-config",
+        help="ingest arbitrary tabular events using a JSON mapping config",
+    )
+    ingest_config.add_argument("--source", type=Path, required=True)
+    ingest_config.add_argument("--config", type=Path, required=True)
+    ingest_config.set_defaults(func="ingest_config")
 
     ingest_sec = sub.add_parser(
         "ingest-security",
@@ -124,6 +135,18 @@ def main(argv: list[str] | None = None) -> int:
     synthetic_events.add_argument("--rows", type=int, default=100_000)
     synthetic_events.set_defaults(func="generate_synthetic")
 
+    files = sub.add_parser("collect-files", help="write local filesystem metadata as event edges")
+    files.add_argument("root", type=Path)
+    files.add_argument("output", type=Path)
+    files.add_argument("--max-files", type=int, default=100_000)
+    files.set_defaults(func="collect_files")
+
+    macos = sub.add_parser("convert-macos-log", help="convert macOS log show JSON to event CSV")
+    macos.add_argument("--input", type=Path, required=True)
+    macos.add_argument("--output", type=Path, required=True)
+    macos.add_argument("--limit", type=int, default=100_000)
+    macos.set_defaults(func="convert_macos_log")
+
     bench = sub.add_parser("benchmark", help="benchmark generic ingest and related-event lookup")
     bench.add_argument("--csv", type=Path, default=Path("/tmp/event_graph_benchmark.csv"))
     bench.add_argument("--rows", type=int, default=100_000)
@@ -152,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sample loaded into {args.db}")
     elif args.func == "ingest":
         _print_json(ingest_events(conn, args.events))
+    elif args.func == "ingest_config":
+        _print_json(ingest_configured_events(conn, args.source, args.config))
     elif args.func == "ingest_security":
         _print_json(ingest_sources(conn, args.logs, args.threat_intel))
     elif args.func == "append":
@@ -188,6 +213,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.func == "generate_synthetic":
         generate_synthetic_events(args.path, args.rows)
         _print_json({"path": str(args.path), "rows": args.rows})
+    elif args.func == "collect_files":
+        _print_json(generate_file_events(args.root, args.output, max_files=args.max_files))
+    elif args.func == "convert_macos_log":
+        _print_json(convert_macos_log_json(args.input, args.output, limit=args.limit))
     else:
         raise AssertionError(args.func)
     return 0

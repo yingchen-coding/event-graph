@@ -3,7 +3,10 @@ from event_graph.engine import (
     add_note,
     append_events,
     connect,
+    convert_macos_log_json,
+    generate_file_events,
     generate_synthetic_events,
+    ingest_configured_events,
     ingest_events,
     load_sample,
     malware_hits,
@@ -76,3 +79,78 @@ def test_generic_events_can_be_appended_incrementally(tmp_path):
     joined = "\n".join(str(item) for item in events)
     assert "late ticket" in joined
     assert "late export" in joined
+
+
+def test_configured_ingest_maps_arbitrary_columns(tmp_path):
+    source = tmp_path / "activity.csv"
+    config = tmp_path / "mapping.json"
+    source.write_text(
+        "\n".join(
+            [
+                "time,actor,verb,target,message",
+                "2026-01-01T00:00:00Z,alice,opened,ticket-1,needs review",
+                "2026-01-01T00:00:01Z,bob,closed,ticket-1,done",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config.write_text(
+        """
+        {
+          "timestamp": "{time}",
+          "details": "{message}",
+          "edges": [
+            {"src": "user:{actor}", "rel": "{verb}", "dst": "ticket:{target}"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+    conn = connect()
+    result = ingest_configured_events(conn, source, config)
+    assert result["events"] == 2
+    events = related_events(conn, "ticket:ticket-1", hops=1, limit=10)
+    joined = "\n".join(str(item) for item in events)
+    assert "needs review" in joined
+    assert "done" in joined
+
+
+def test_local_file_events_can_be_ingested(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "a.txt").write_text("hello", encoding="utf-8")
+    output = tmp_path / "files.csv"
+    generated = generate_file_events(root, output)
+    assert generated["files"] == 1
+    assert generated["events"] == 2
+    conn = connect()
+    ingest_events(conn, output)
+    events = related_events(conn, f"dir:{root}", hops=1, limit=10)
+    assert "a.txt" in str(events)
+
+
+def test_macos_log_json_can_be_converted_and_ingested(tmp_path):
+    raw = tmp_path / "macos.json"
+    output = tmp_path / "macos.csv"
+    raw.write_text(
+        """
+        [
+          {
+            "timestamp": "2026-01-01 00:00:00.000000-0800",
+            "process": "backupd",
+            "subsystem": "com.apple.TimeMachine",
+            "category": "backup",
+            "eventMessage": "Backup started",
+            "messageType": "Info"
+          }
+        ]
+        """,
+        encoding="utf-8",
+    )
+    converted = convert_macos_log_json(raw, output)
+    assert converted["events"] == 1
+    conn = connect()
+    ingest_events(conn, output)
+    events = related_events(conn, "process:backupd", hops=1, limit=10)
+    assert "Backup started" in str(events)
