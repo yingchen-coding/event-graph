@@ -1,51 +1,47 @@
-# Security Graph
+# Event Graph
 
-Security Graph is a local PuppyGraph/Memgraph/Kuzu-inspired prototype for threat hunting.
+Event Graph is a fast entity/event index for large logs.
 
-It is not a graph visualization tool. It is a fast entity index over security logs.
+It is not a graph visualization tool. It is an indexing pattern:
 
-The core job is practical: ingest millions of firewall events, extract entities, connect them as
-edges, and quickly return all events related to a user/IP/domain/threat without scanning every raw
-log row at query time.
+1. Ingest events.
+2. Extract entities and relationships.
+3. Build compact `entity_edges(src, dst, rel)` and `entity_events(entity, event_id)` tables.
+4. Query from one entity to all related events without scanning the whole raw dataset.
+
+This can be used for security logs, agent traces, audit logs, product events, support tickets,
+financial transactions, workflow histories, or anything else where records are connected by
+entities.
 
 ## Why This Works
 
 The scalable pattern is:
 
-- keep high-volume logs in columnar/relational storage;
-- materialize compact `entity_edges(src, dst, rel)` from raw logs;
-- materialize compact `entity_events(entity, event_id)` as the lookup index;
-- query by expanding related entities first, then join only matching `event_id`s back to logs;
-- store analyst edges/notes as overlays instead of rewriting raw logs;
+- keep high-volume raw events in columnar/relational storage;
+- materialize compact `entity_edges(src, dst, rel)`;
+- materialize compact `entity_events(entity, event_id)` as an inverted index;
+- query by expanding related entities first, then join only matching `event_id`s back to raw events;
+- store analyst/user edges and notes as overlays instead of rewriting raw data;
 - delete edges/notes with tombstones so investigations stay auditable.
 
 DuckDB is used here as the local scan/index engine. KuzuDB and Memgraph are useful next steps when
 you want a dedicated graph runtime; this repo can export Kuzu-style CSV and Memgraph-style Cypher.
 
-## Data Model
+## Generic Input
 
-Raw logs stay in `firewall_logs`.
+Generic event CSV/JSON/Parquet should contain:
 
-Ingest builds two compact lookup tables:
+`ts, src, dst, rel`
 
-- `entity_edges(src, dst, rel)`: graph links derived from logs, for example
-  `user:alice -> ip:10.0.0.5 -> domain:bad.example -> threat:Malware callback`.
-- `entity_events(entity, event_id)`: inverted index from entity to raw log event.
+Optional columns are preserved and returned with matching events.
 
-Query flow:
+Example:
 
-1. Start from a seed entity such as `domain:bad.example`.
-2. Expand connected entities for `N` hops through `entity_edges`.
-3. Join those entities to `entity_events`.
-4. Fetch only matching rows from `firewall_logs`.
-
-Manual analyst context uses overlays:
-
-- `manual_edges`: add relationship without changing raw logs.
-- `entity_notes`: add notes to an entity.
-- `deleted_edges`: tombstone/suppress bad edges without mutating logs.
-
-This is built for search speed and auditability, not graph visualization.
+```csv
+ts,src,dst,rel,details
+2026-01-01T00:00:00Z,user:alice,service:billing,used,opened billing page
+2026-01-01T00:00:01Z,service:billing,file:invoice.pdf,touched,generated export
+```
 
 ## Install
 
@@ -56,47 +52,51 @@ python -m pip install -e '.[dev]'
 ## Quick Start
 
 ```bash
-security-graph --db demo.duckdb load-sample
-security-graph --db demo.duckdb malware-hits
-security-graph --db demo.duckdb related-events user:alice --hops 3
+event-graph generate-synthetic /tmp/events.csv --rows 100000
+event-graph --db /tmp/events.duckdb ingest --events /tmp/events.csv
+event-graph --db /tmp/events.duckdb related-events user:alice --hops 2 --limit 20
 ```
 
-Ingest raw log files:
+Add context without mutating raw events:
 
 ```bash
-security-graph --db prod.duckdb ingest \
-  --logs examples/firewall_logs.csv \
-  --threat-intel examples/threat_intel.csv
+event-graph --db /tmp/events.duckdb add-edge user:alice owns ticket:INC-123 \
+  --note "Manual analyst link"
 
-security-graph --db prod.duckdb related-events domain:bad.example --hops 2
+event-graph --db /tmp/events.duckdb add-note user:alice "Repeated export failures"
+event-graph --db /tmp/events.duckdb search export
 ```
 
-Add analyst context without mutating logs:
+Benchmark:
 
 ```bash
-security-graph --db prod.duckdb add-edge user:alice suspected_compromise threat:ExampleRAT \
-  --note "Repeated callbacks after initial hit"
-
-security-graph --db prod.duckdb add-note ip:10.0.0.5 "Seen in incident INC-123"
-security-graph --db prod.duckdb search INC-123
+event-graph --db /tmp/events.duckdb benchmark --rows 1000000 \
+  --seed user:alice --hops 2 --limit 100
 ```
 
-Generate synthetic logs for local speed testing:
+## Security Adapter Example
+
+Security logs are one adapter, not the whole product.
+
+Expected security columns:
+
+`ts, src_ip, dst_ip, src_user, url_domain, threat_name, threat_category, action, application, bytes`
 
 ```bash
-security-graph generate-synthetic /tmp/fw.csv --rows 1000000
-security-graph --db /tmp/fw.duckdb ingest --logs /tmp/fw.csv
-security-graph --db /tmp/fw.duckdb related-events domain:bad.example --hops 2 --limit 20
+event-graph --db demo.duckdb load-sample
+event-graph --db demo.duckdb malware-hits
+event-graph --db demo.duckdb related-events domain:bad.example --hops 2
 ```
 
-Local benchmark on this machine:
+Generate a synthetic security dataset:
 
 ```bash
-security-graph --db /tmp/fw.duckdb benchmark --rows 1000000 \
-  --seed domain:bad.example --hops 2 --limit 100
+event-graph generate-synthetic-security /tmp/fw.csv --rows 1000000
+event-graph --db /tmp/fw.duckdb ingest-security --logs /tmp/fw.csv
+event-graph --db /tmp/fw.duckdb related-events domain:bad.example --hops 2 --limit 20
 ```
 
-Observed result:
+Observed local security benchmark on this machine:
 
 ```json
 {
@@ -109,14 +109,17 @@ Observed result:
 }
 ```
 
-## Expected Firewall Log Columns
+## Exports
 
-`ts, src_ip, dst_ip, src_user, url_domain, threat_name, threat_category, action, application, bytes`
+```bash
+event-graph --db /tmp/events.duckdb export kuzu-csv /tmp/kuzu
+event-graph --db /tmp/events.duckdb export memgraph-cypher /tmp/memgraph
+```
 
 ## What To Build Next
 
-- Partition-aware date filters for one-year log lakes.
-- Real Palo Alto field mapping profiles.
-- Parquet/Iceberg table support examples.
-- More graph patterns: lateral movement, repeated failed auth, beaconing, exfiltration.
-- Benchmark generator for 10M+ synthetic events.
+- Config-driven entity extraction from arbitrary schemas.
+- Parquet/Iceberg partition pruning.
+- Incremental append without full index rebuild.
+- Larger 10M+ event benchmark.
+- Adapters for security, agent traces, product analytics, audit logs, and ticket systems.

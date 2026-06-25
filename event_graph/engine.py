@@ -33,6 +33,7 @@ LOG_COLUMNS = [
     "application",
     "bytes",
 ]
+GENERIC_EVENT_COLUMNS = {"ts", "src", "dst", "rel"}
 
 
 def connect(database: str | Path = ":memory:") -> duckdb.DuckDBPyConnection:
@@ -134,6 +135,33 @@ def ingest_sources(
         materialize_entity_events(conn)
     return {
         "logs": conn.execute("SELECT count(*) FROM firewall_logs").fetchone()[0],
+        "entity_edges": _relation_count(conn, "entity_edges"),
+        "entity_events": _relation_count(conn, "entity_events"),
+    }
+
+
+def ingest_events(
+    conn: duckdb.DuckDBPyConnection,
+    events: str | Path,
+    *,
+    materialize: bool = True,
+) -> dict[str, int]:
+    conn.execute(
+        f"""
+        CREATE OR REPLACE TABLE events AS
+        SELECT row_number() OVER () AS event_id, *
+        FROM {_reader_sql(events)}
+        """
+    )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info('events')").fetchall()}
+    missing = sorted(GENERIC_EVENT_COLUMNS - columns)
+    if missing:
+        raise ValueError(f"event source is missing columns: {', '.join(missing)}")
+    if materialize:
+        materialize_event_edges(conn)
+        materialize_event_entity_index(conn)
+    return {
+        "events": conn.execute("SELECT count(*) FROM events").fetchone()[0],
         "entity_edges": _relation_count(conn, "entity_edges"),
         "entity_events": _relation_count(conn, "entity_events"),
     }
@@ -335,6 +363,38 @@ def materialize_entity_events(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS entity_events_event_idx ON entity_events(event_id)")
 
 
+def materialize_event_edges(conn: duckdb.DuckDBPyConnection) -> None:
+    init_graph(conn)
+    conn.execute(
+        """
+        CREATE OR REPLACE TABLE entity_edges AS
+        SELECT DISTINCT src, dst, rel
+        FROM events
+        WHERE src IS NOT NULL AND dst IS NOT NULL AND rel IS NOT NULL
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS entity_edges_src_idx ON entity_edges(src)")
+    conn.execute("CREATE INDEX IF NOT EXISTS entity_edges_dst_idx ON entity_edges(dst)")
+
+
+def materialize_event_entity_index(conn: duckdb.DuckDBPyConnection) -> None:
+    init_graph(conn)
+    conn.execute(
+        """
+        CREATE OR REPLACE TABLE entity_events AS
+        SELECT DISTINCT src AS entity, event_id
+        FROM events
+        WHERE src IS NOT NULL
+        UNION
+        SELECT DISTINCT dst AS entity, event_id
+        FROM events
+        WHERE dst IS NOT NULL
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS entity_events_entity_idx ON entity_events(entity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS entity_events_event_idx ON entity_events(event_id)")
+
+
 def add_edge(
     conn: duckdb.DuckDBPyConnection,
     src: str,
@@ -506,6 +566,8 @@ def related_events(
     if not _relation_exists(conn, "entity_events"):
         materialize_entity_events(conn)
     edge_relation = _effective_edges_sql(conn)
+    event_table = "events" if _relation_exists(conn, "events") else "firewall_logs"
+    order_column = "ts" if _relation_has_column(conn, event_table, "ts") else "event_id"
     rows = conn.execute(
         f"""
         WITH RECURSIVE related_nodes(depth, node, path) AS (
@@ -533,10 +595,10 @@ def related_events(
         SELECT
           event_hits.depth,
           event_hits.matched_entities,
-          firewall_logs.*
+          source_events.*
         FROM event_hits
-        JOIN firewall_logs ON firewall_logs.event_id = event_hits.event_id
-        ORDER BY event_hits.depth, firewall_logs.ts DESC
+        JOIN {event_table} AS source_events ON source_events.event_id = event_hits.event_id
+        ORDER BY event_hits.depth, source_events.{order_column} DESC
         LIMIT ?
         """,
         [seed, seed, hops, limit],
@@ -751,6 +813,36 @@ def generate_synthetic_logs(path: str | Path, rows: int) -> None:
             )
 
 
+def generate_synthetic_events(path: str | Path, rows: int) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    users = ["user:alice", "user:bob", "user:carol", "user:dave"]
+    services = ["service:billing", "service:search", "service:login", "service:export"]
+    artifacts = ["file:invoice.pdf", "query:timeout", "ticket:INC-123", "model:gpt"]
+    with output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["ts", "src", "dst", "rel", "details"])
+        for index in range(rows):
+            src = users[index % len(users)]
+            mid = services[index % len(services)]
+            dst = artifacts[index % len(artifacts)]
+            if index % 2:
+                src, dst = mid, dst
+                rel = "touched"
+            else:
+                dst = mid
+                rel = "used"
+            writer.writerow(
+                [
+                    f"2026-01-{index % 28 + 1:02d}T00:00:00Z",
+                    src,
+                    dst,
+                    rel,
+                    f"synthetic event {index}",
+                ]
+            )
+
+
 def benchmark(
     conn: duckdb.DuckDBPyConnection,
     csv_path: str | Path,
@@ -781,3 +873,43 @@ def benchmark(
         "returned_events": len(events),
         **ingest_result,
     }
+
+
+def benchmark_events(
+    conn: duckdb.DuckDBPyConnection,
+    csv_path: str | Path,
+    rows: int,
+    seed: str,
+    hops: int = 2,
+    limit: int = 100,
+) -> dict[str, Any]:
+    csv_path = Path(csv_path)
+    start = time.perf_counter()
+    generate_synthetic_events(csv_path, rows)
+    generated_seconds = time.perf_counter() - start
+
+    start = time.perf_counter()
+    ingest_result = ingest_events(conn, csv_path)
+    ingest_seconds = time.perf_counter() - start
+
+    start = time.perf_counter()
+    events = related_events(conn, seed, hops=hops, limit=limit)
+    query_seconds = time.perf_counter() - start
+
+    return {
+        "rows": rows,
+        "generated_seconds": round(generated_seconds, 3),
+        "ingest_seconds": round(ingest_seconds, 3),
+        "query_seconds": round(query_seconds, 3),
+        "query_millis": round(query_seconds * 1000, 3),
+        "returned_events": len(events),
+        **ingest_result,
+    }
+
+
+def _relation_has_column(conn: duckdb.DuckDBPyConnection, relation: str, column: str) -> bool:
+    try:
+        rows = conn.execute(f"PRAGMA table_info('{relation}')").fetchall()
+    except duckdb.CatalogException:
+        return False
+    return any(row[1] == column for row in rows)

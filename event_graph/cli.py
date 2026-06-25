@@ -9,9 +9,12 @@ from .engine import (
     add_note,
     append_logs,
     benchmark,
+    benchmark_events,
     connect,
     export_graph,
+    generate_synthetic_events,
     generate_synthetic_logs,
+    ingest_events,
     ingest_sources,
     load_sample,
     malware_hits,
@@ -29,7 +32,7 @@ def _print_json(value: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Find related security events quickly with entity-edge indexes."
+        description="Find related events quickly with entity-edge indexes."
     )
     parser.add_argument("--db", default=":memory:", help="DuckDB path, or :memory:")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -37,16 +40,23 @@ def main(argv: list[str] | None = None) -> int:
     sample = sub.add_parser("load-sample", help="load bundled sample data into the database")
     sample.set_defaults(func="load_sample")
 
-    ingest = sub.add_parser("ingest", help="ingest logs and materialize entity indexes")
-    ingest.add_argument("--logs", type=Path, required=True)
-    ingest.add_argument("--threat-intel", type=Path)
+    ingest = sub.add_parser("ingest", help="ingest generic event edges and materialize indexes")
+    ingest.add_argument("--events", type=Path, required=True)
     ingest.set_defaults(func="ingest")
+
+    ingest_sec = sub.add_parser(
+        "ingest-security",
+        help="ingest security logs with firewall mapping",
+    )
+    ingest_sec.add_argument("--logs", type=Path, required=True)
+    ingest_sec.add_argument("--threat-intel", type=Path)
+    ingest_sec.set_defaults(func="ingest_security")
 
     append = sub.add_parser("append", help="append logs and rebuild entity indexes")
     append.add_argument("--logs", type=Path, required=True)
     append.set_defaults(func="append")
 
-    scan = sub.add_parser("malware-hits", help="find malware-related firewall events")
+    scan = sub.add_parser("malware-hits", help="security adapter: find malware-related events")
     scan.add_argument("--limit", type=int, default=50)
     scan.set_defaults(func="malware_hits")
 
@@ -96,18 +106,35 @@ def main(argv: list[str] | None = None) -> int:
     export.add_argument("output_dir", type=Path)
     export.set_defaults(func="export")
 
-    synthetic = sub.add_parser("generate-synthetic", help="write synthetic firewall CSV")
+    synthetic = sub.add_parser("generate-synthetic-security", help="write synthetic security CSV")
     synthetic.add_argument("path", type=Path)
     synthetic.add_argument("--rows", type=int, default=100_000)
-    synthetic.set_defaults(func="generate_synthetic")
+    synthetic.set_defaults(func="generate_synthetic_security")
 
-    bench = sub.add_parser("benchmark", help="benchmark synthetic ingest and related-event lookup")
-    bench.add_argument("--csv", type=Path, default=Path("/tmp/security_graph_benchmark.csv"))
+    synthetic_events = sub.add_parser("generate-synthetic", help="write generic event-edge CSV")
+    synthetic_events.add_argument("path", type=Path)
+    synthetic_events.add_argument("--rows", type=int, default=100_000)
+    synthetic_events.set_defaults(func="generate_synthetic")
+
+    bench = sub.add_parser("benchmark", help="benchmark generic ingest and related-event lookup")
+    bench.add_argument("--csv", type=Path, default=Path("/tmp/event_graph_benchmark.csv"))
     bench.add_argument("--rows", type=int, default=100_000)
     bench.add_argument("--seed", default="domain:bad.example")
     bench.add_argument("--hops", type=int, default=2)
     bench.add_argument("--limit", type=int, default=100)
     bench.set_defaults(func="benchmark")
+
+    bench_sec = sub.add_parser("benchmark-security", help="benchmark security adapter")
+    bench_sec.add_argument(
+        "--csv",
+        type=Path,
+        default=Path("/tmp/event_graph_security_benchmark.csv"),
+    )
+    bench_sec.add_argument("--rows", type=int, default=100_000)
+    bench_sec.add_argument("--seed", default="domain:bad.example")
+    bench_sec.add_argument("--hops", type=int, default=2)
+    bench_sec.add_argument("--limit", type=int, default=100)
+    bench_sec.set_defaults(func="benchmark_security")
 
     args = parser.parse_args(argv)
     conn = connect(args.db)
@@ -116,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         load_sample(conn)
         print(f"sample loaded into {args.db}")
     elif args.func == "ingest":
+        _print_json(ingest_events(conn, args.events))
+    elif args.func == "ingest_security":
         _print_json(ingest_sources(conn, args.logs, args.threat_intel))
     elif args.func == "append":
         _print_json({"logs": append_logs(conn, args.logs)})
@@ -139,11 +168,16 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(search_graph(conn, args.query, args.limit))
     elif args.func == "export":
         _print_json(export_graph(conn, args.output_dir, args.format))
-    elif args.func == "generate_synthetic":
+    elif args.func == "generate_synthetic_security":
         generate_synthetic_logs(args.path, args.rows)
         _print_json({"path": str(args.path), "rows": args.rows})
     elif args.func == "benchmark":
+        _print_json(benchmark_events(conn, args.csv, args.rows, args.seed, args.hops, args.limit))
+    elif args.func == "benchmark_security":
         _print_json(benchmark(conn, args.csv, args.rows, args.seed, args.hops, args.limit))
+    elif args.func == "generate_synthetic":
+        generate_synthetic_events(args.path, args.rows)
+        _print_json({"path": str(args.path), "rows": args.rows})
     else:
         raise AssertionError(args.func)
     return 0

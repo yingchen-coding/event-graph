@@ -1,7 +1,9 @@
-from security_graph.engine import (
+from event_graph.engine import (
     add_edge,
     add_note,
     connect,
+    generate_synthetic_events,
+    ingest_events,
     load_sample,
     malware_hits,
     related_events,
@@ -36,3 +38,14 @@ def test_manual_edge_and_note_are_searchable():
     assert note["id"]
     results = search_graph(conn, "INC-123")
     assert results[0]["item"] == "user:alice"
+
+
+def test_generic_events_can_be_indexed(tmp_path):
+    path = tmp_path / "events.csv"
+    generate_synthetic_events(path, 100)
+    conn = connect()
+    result = ingest_events(conn, path)
+    assert result["events"] == 100
+    events = related_events(conn, "user:alice", hops=2, limit=10)
+    assert events
+    assert "user:alice" in str(events)

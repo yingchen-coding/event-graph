@@ -3,10 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "security-graph"
+name = "event-graph"
 version = "0.1.0"
-description = "Zero-copy graph investigations over firewall and threat-intel logs."
+description = "Fast entity/event graph indexes over large event logs."
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = ["duckdb>=1.0"]
 
@@ -14,7 +15,7 @@ dependencies = ["duckdb>=1.0"]
 dev = ["pytest>=8", "ruff>=0.11"]
 
 [project.scripts]
-security-graph = "security_graph.cli:main"
+event-graph = "event_graph.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
