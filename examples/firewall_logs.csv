@@ -1,0 +1,5 @@
+ts,src_ip,dst_ip,src_user,url_domain,threat_name,threat_category,action,application,bytes
+2026-06-24T10:00:00Z,10.0.0.5,198.51.100.8,alice,updates.example.com,,benign,allow,web-browsing,900
+2026-06-24T10:05:00Z,10.0.0.5,203.0.113.66,alice,bad.example,Malware callback,malware,allow,web-browsing,1500
+2026-06-24T10:06:00Z,10.0.0.7,10.0.0.5,bob,,Suspicious lateral movement,spyware,allow,smb,4000
+2026-06-24T10:07:00Z,10.0.0.9,203.0.113.77,carol,c2.example,,unknown,allow,dns,300

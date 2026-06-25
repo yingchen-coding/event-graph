@@ -1,0 +1,3 @@
+indicator_type,indicator_value,malware_family,severity
+domain,bad.example,ExampleRAT,high
+ip,203.0.113.77,ExampleLoader,critical
