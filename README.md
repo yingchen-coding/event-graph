@@ -1,6 +1,11 @@
 # Event Graph
 
-Event Graph is a fast entity/event index for large logs.
+[![CI](https://github.com/yingchen-coding/event-graph/actions/workflows/ci.yml/badge.svg)](https://github.com/yingchen-coding/event-graph/actions)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+Event Graph is a fast entity/event index for large logs: ingest millions of records, connect them by
+entities, then jump to the related events without scanning the raw dataset again.
 
 It is not a graph visualization tool. It is an indexing pattern:
 
@@ -12,6 +17,12 @@ It is not a graph visualization tool. It is an indexing pattern:
 This can be used for security logs, agent traces, audit logs, product events, support tickets,
 financial transactions, workflow histories, or anything else where records are connected by
 entities.
+
+## Star This If
+
+- You need graph-style investigation over logs but do not want to run a graph database first.
+- You have agent traces, audit logs, support tickets, security logs, or product events connected by IDs.
+- You care about ingestion speed, explainable tables, and reproducible local benchmarks.
 
 ## Why This Works
 
@@ -216,6 +227,12 @@ Observed local security benchmark on this machine:
 ```bash
 event-graph --db /tmp/events.duckdb export kuzu-csv /tmp/kuzu
 event-graph --db /tmp/events.duckdb export memgraph-cypher /tmp/memgraph
+```
+
+## Local Review
+
+```bash
+scripts/pr_review_check.sh
 ```
 
 ## What To Build Next

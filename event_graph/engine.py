@@ -6,11 +6,13 @@ import re
 import time
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import duckdb
+
+UTC = timezone.utc
 
 REQUIRED_LOG_COLUMNS = {
     "ts",

@@ -10,6 +10,24 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = ["duckdb>=1.0", "pytz>=2024.1"]
+authors = [{ name = "Ying Chen" }]
+keywords = ["event-graph", "logs", "duckdb", "entity-resolution", "graph-index", "security-logs"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Database",
+  "Topic :: System :: Logging",
+]
+
+[project.urls]
+Homepage = "https://github.com/yingchen-coding/event-graph"
+Repository = "https://github.com/yingchen-coding/event-graph"
+Issues = "https://github.com/yingchen-coding/event-graph/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.11"]
