@@ -111,6 +111,9 @@ event-graph --db /tmp/events.duckdb ingest-parquet \
   --where "day = DATE '2026-01-01'"
 ```
 
+`--where` is intended for local trusted filters. The CLI rejects multi-statement or mutating SQL
+tokens, but it is not a sandbox for untrusted input.
+
 ## Local Computer Events
 
 Filesystem metadata can be converted into event edges:

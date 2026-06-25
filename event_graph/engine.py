@@ -294,6 +294,7 @@ def ingest_partitioned_events(
     materialize: bool = True,
 ) -> dict[str, int]:
     reader = _reader_sql(source)
+    _validate_where_clause(where)
     filter_sql = f"WHERE {where}" if where else ""
     conn.execute(
         f"""
@@ -882,7 +883,7 @@ def neighborhood(
     hops: int = 3,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    edge_relation = _effective_edges_sql(conn)
+    edge_relation = _walk_edges_sql(conn)
     rows = conn.execute(
         f"""
         WITH RECURSIVE walk(depth, node, path) AS (
@@ -917,7 +918,7 @@ def related_events(
     init_graph(conn)
     if not _relation_exists(conn, "entity_events"):
         materialize_entity_events(conn)
-    edge_relation = _effective_edges_sql(conn)
+    edge_relation = _walk_edges_sql(conn)
     event_table = "events" if _relation_exists(conn, "events") else "firewall_logs"
     order_column = "ts" if _relation_has_column(conn, event_table, "ts") else "event_id"
     rows = conn.execute(
@@ -1179,16 +1180,33 @@ def _effective_edges_sql(conn: duckdb.DuckDBPyConnection) -> str:
     return """
       SELECT DISTINCT e.src, e.dst, e.rel
       FROM (
-        SELECT src, dst, rel FROM entity_edges
+        SELECT src, dst, rel, NULL::DOUBLE AS created_at FROM entity_edges
         UNION ALL
-        SELECT src, dst, rel FROM manual_edges WHERE deleted_at IS NULL
+        SELECT src, dst, rel, created_at FROM manual_edges WHERE deleted_at IS NULL
       ) e
       WHERE NOT EXISTS (
         SELECT 1
         FROM deleted_edges d
         WHERE d.src = e.src AND d.dst = e.dst AND d.rel = e.rel
+          AND (e.created_at IS NULL OR e.created_at <= d.deleted_at)
       )
     """
+
+
+def _walk_edges_sql(conn: duckdb.DuckDBPyConnection) -> str:
+    edge_sql = _effective_edges_sql(conn)
+    return f"""
+      SELECT src, dst, rel FROM ({edge_sql})
+      UNION
+      SELECT dst AS src, src AS dst, rel || '_reverse' AS rel FROM ({edge_sql})
+    """
+
+
+def _validate_where_clause(where: str) -> None:
+    lowered = where.lower()
+    blocked = (";", "--", "/*", "*/", " drop ", " delete ", " update ", " insert ", " create ")
+    if any(token in f" {lowered} " for token in blocked):
+        raise ValueError("--where only accepts a single read-only filter expression")
 
 
 def search_graph(

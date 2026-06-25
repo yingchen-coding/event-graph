@@ -13,7 +13,9 @@ from event_graph.engine import (
     ingest_partitioned_events,
     load_sample,
     malware_hits,
+    neighborhood,
     related_events,
+    remove_edge,
     search_graph,
 )
 
@@ -45,6 +47,25 @@ def test_manual_edge_and_note_are_searchable():
     assert note["id"]
     results = search_graph(conn, "INC-123")
     assert results[0]["item"] == "user:alice"
+
+
+def test_removed_manual_edge_can_be_readded():
+    conn = connect()
+    load_sample(conn)
+    add_edge(conn, "user:alice", "ticket:INC-123", "owns")
+    remove_edge(conn, "user:alice", "ticket:INC-123", "owns")
+    assert "ticket:INC-123" not in str(neighborhood(conn, "user:alice", hops=1, limit=50))
+    add_edge(conn, "user:alice", "ticket:INC-123", "owns")
+    assert "ticket:INC-123" in str(neighborhood(conn, "user:alice", hops=1, limit=50))
+
+
+def test_related_events_walks_reverse_edges():
+    conn = connect()
+    load_sample(conn)
+    events = related_events(conn, "domain:bad.example", hops=3, limit=20)
+    joined = "\n".join(str(item) for item in events)
+    assert "user:alice" in joined
+    assert "Malware callback" in joined
 
 
 def test_generic_events_can_be_indexed(tmp_path):
@@ -242,3 +263,29 @@ def test_partitioned_parquet_ingest_filters_before_indexing(tmp_path):
     assert result["events"] == 1
     assert "keep" in str(related_events(conn, "user:alice", hops=1, limit=10))
     assert not related_events(conn, "user:bob", hops=1, limit=10)
+
+
+def test_partitioned_parquet_where_rejects_statement_injection(tmp_path):
+    csv_path = tmp_path / "events.csv"
+    parquet_dir = tmp_path / "events_parquet"
+    csv_path.write_text(
+        "ts,src,dst,rel,day,details\n"
+        "2026-01-01T00:00:00Z,user:alice,service:billing,used,2026-01-01,keep\n",
+        encoding="utf-8",
+    )
+    conn = connect()
+    conn.execute(
+        f"""
+        COPY (
+          SELECT * FROM read_csv_auto('{csv_path}', header=true)
+        )
+        TO '{parquet_dir}' (FORMAT parquet, PARTITION_BY (day))
+        """
+    )
+    conn = connect()
+    try:
+        ingest_partitioned_events(conn, parquet_dir, where="true; DROP TABLE events")
+    except ValueError as error:
+        assert "read-only filter" in str(error)
+    else:
+        raise AssertionError("unsafe where clause should fail")
