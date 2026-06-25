@@ -9,7 +9,7 @@ description = "Fast entity/event graph indexes over large event logs."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["duckdb>=1.0"]
+dependencies = ["duckdb>=1.0", "pytz>=2024.1"]
 authors = [{ name = "Ying Chen" }]
 keywords = ["event-graph", "logs", "duckdb", "entity-resolution", "graph-index", "security-logs"]
 classifiers = [
