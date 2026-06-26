@@ -1,7 +1,9 @@
+from event_graph.cli import _truncate_details
 from event_graph.engine import (
     add_edge,
     add_note,
     append_events,
+    append_logs,
     connect,
     convert_agent_trace_jsonl,
     convert_macos_log_json,
@@ -103,6 +105,25 @@ def test_generic_events_can_be_appended_incrementally(tmp_path):
     joined = "\n".join(str(item) for item in events)
     assert "late ticket" in joined
     assert "late export" in joined
+
+
+def test_security_logs_append_can_initialize_empty_database(tmp_path):
+    path = tmp_path / "firewall.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "ts,src_ip,dst_ip,src_user,url_domain,threat_name,threat_category,action,application,bytes",
+                "2026-01-01T00:00:00Z,10.0.0.5,203.0.113.9,alice,bad.example,"
+                "Malware callback,malware,allow,dns,512",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    conn = connect()
+    assert append_logs(conn, path) == 1
+    events = related_events(conn, "domain:bad.example", hops=2, limit=10)
+    assert "Malware callback" in str(events)
 
 
 def test_configured_ingest_maps_arbitrary_columns(tmp_path):
@@ -230,6 +251,7 @@ def test_agent_trace_jsonl_can_be_converted_and_ingested(tmp_path):
     )
     converted = convert_agent_trace_jsonl(raw, output)
     assert converted["events"] == 4
+    assert converted["sessions"] == ["s1"]
     conn = connect()
     ingest_events(conn, output)
     assert "pytest" in str(related_events(conn, "session:s1", hops=1, limit=10))
@@ -289,3 +311,11 @@ def test_partitioned_parquet_where_rejects_statement_injection(tmp_path):
         assert "read-only filter" in str(error)
     else:
         raise AssertionError("unsafe where clause should fail")
+
+
+def test_cli_truncates_long_details_by_default_shape():
+    rows = [{"details": "x" * 20, "event_id": 1}]
+    truncated = _truncate_details(rows, 8)
+    assert truncated[0]["details"] == "x" * 8 + "... [truncated 12 chars]"
+    assert rows[0]["details"] == "x" * 20
+    assert _truncate_details(rows, 0)[0]["details"] == "x" * 20

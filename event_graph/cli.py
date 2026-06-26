@@ -102,6 +102,12 @@ def main(argv: list[str] | None = None) -> int:
     events.add_argument("seed", help="node id such as ip:10.0.0.5 or user:alice")
     events.add_argument("--hops", type=int, default=2)
     events.add_argument("--limit", type=int, default=100)
+    events.add_argument(
+        "--details-max-chars",
+        type=int,
+        default=1000,
+        help="truncate long details fields in CLI output; use 0 for full details",
+    )
     events.set_defaults(func="related_events")
 
     hood = sub.add_parser("neighborhood", help="walk graph edges from a seed node")
@@ -215,7 +221,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.func == "malware_hits":
         _print_json(malware_hits(conn, args.limit))
     elif args.func == "related_events":
-        _print_json(related_events(conn, args.seed, args.hops, args.limit))
+        _print_json(
+            _truncate_details(
+                related_events(conn, args.seed, args.hops, args.limit),
+                args.details_max_chars,
+            )
+        )
     elif args.func == "neighborhood":
         _print_json(neighborhood(conn, args.seed, args.hops, args.limit))
     elif args.func == "add_edge":
@@ -251,6 +262,21 @@ def main(argv: list[str] | None = None) -> int:
     else:
         raise AssertionError(args.func)
     return 0
+
+
+def _truncate_details(rows: list[dict[str, object]], max_chars: int) -> list[dict[str, object]]:
+    if max_chars <= 0:
+        return rows
+    truncated = []
+    for row in rows:
+        item = dict(row)
+        details = item.get("details")
+        if isinstance(details, str) and len(details) > max_chars:
+            item["details"] = (
+                details[:max_chars] + f"... [truncated {len(details) - max_chars} chars]"
+            )
+        truncated.append(item)
+    return truncated
 
 
 if __name__ == "__main__":

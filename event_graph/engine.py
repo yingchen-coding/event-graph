@@ -452,6 +452,7 @@ def convert_agent_trace_jsonl(
     output_path = Path(output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     rows = 0
+    sessions: set[str] = set()
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["ts", "src", "dst", "rel", "details"])
@@ -459,6 +460,7 @@ def convert_agent_trace_jsonl(
             if rows >= limit:
                 break
             session_id = str(item.get("sessionId") or item.get("session_id") or "unknown")
+            sessions.add(session_id)
             session = f"session:{session_id}"
             timestamp = str(item.get("timestamp") or item.get("ts") or "")
             cwd = str(item.get("cwd") or "")
@@ -483,10 +485,18 @@ def convert_agent_trace_jsonl(
                     break
                 writer.writerow([timestamp, session, f"tool:{tool_name}", "used_tool", ""])
                 rows += 1
-    return {"path": str(output_path), "events": rows, "source": str(source)}
+    return {
+        "path": str(output_path),
+        "events": rows,
+        "source": str(source),
+        "sessions": sorted(sessions)[:20],
+    }
 
 
 def append_logs(conn: duckdb.DuckDBPyConnection, logs: str | Path) -> int:
+    if not _relation_exists(conn, "firewall_logs"):
+        return ingest_sources(conn, logs)["logs"]
+
     offset = conn.execute("SELECT COALESCE(max(event_id), 0) FROM firewall_logs").fetchone()[0]
     conn.execute(
         f"""

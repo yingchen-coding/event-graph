@@ -68,6 +68,9 @@ event-graph --db /tmp/events.duckdb ingest --events /tmp/events.csv
 event-graph --db /tmp/events.duckdb related-events user:alice --hops 2 --limit 20
 ```
 
+`related-events` truncates long `details` fields in CLI output by default so large traces do not
+flood the terminal. Use `--details-max-chars 0` when you need full payloads.
+
 ## Arbitrary Schemas
 
 For logs that do not already have `ts,src,dst,rel`, provide a JSON mapping:
@@ -106,6 +109,9 @@ event-graph convert-agent-trace --input ~/.claude/projects/.../session.jsonl \
 event-graph --db /tmp/agent-trace.duckdb ingest --events /tmp/agent-trace.csv
 event-graph --db /tmp/agent-trace.duckdb related-events session:SESSION_ID --hops 1
 ```
+
+The conversion output includes a `sessions` field. Use one of those values as
+`session:SESSION_ID`.
 
 Append new events without replacing the database:
 
