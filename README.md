@@ -70,10 +70,14 @@ python -m pip install -e '.[dev]'
 event-graph generate-synthetic /tmp/events.csv --rows 100000
 event-graph --db /tmp/events.duckdb ingest --events /tmp/events.csv
 event-graph --db /tmp/events.duckdb related-events user:alice --hops 2 --limit 20
+event-graph --db /tmp/events.duckdb explain user:alice --hops 2 --output /tmp/alice-subgraph.json
 ```
 
 `related-events` truncates long `details` fields in CLI output by default so large traces do not
 flood the terminal. Use `--details-max-chars 0` when you need full payloads.
+
+Use `explain` when you need a shareable investigation artifact. It returns the seed, traversed
+nodes, effective edges, and related event rows in one JSON document.
 
 ## Arbitrary Schemas
 

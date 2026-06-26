@@ -973,6 +973,41 @@ def related_events(
     return [dict(zip(columns, row, strict=False)) for row in rows]
 
 
+def explain_subgraph(
+    conn: duckdb.DuckDBPyConnection,
+    seed: str,
+    hops: int = 2,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """Return the nodes, edges, and events used to explain a seed entity."""
+    nodes = neighborhood(conn, seed, hops=hops, limit=limit)
+    node_ids = {str(item["node"]) for item in nodes}
+    if seed:
+        node_ids.add(seed)
+    edge_rows = []
+    if node_ids:
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT src, dst, rel
+            FROM ({_effective_edges_sql(conn)})
+            WHERE src IN (SELECT unnest(?::VARCHAR[]))
+              AND dst IN (SELECT unnest(?::VARCHAR[]))
+            ORDER BY src, dst, rel
+            LIMIT ?
+            """,
+            [sorted(node_ids), sorted(node_ids), limit],
+        ).fetchall()
+        columns = [item[0] for item in conn.description]
+        edge_rows = [dict(zip(columns, row, strict=False)) for row in rows]
+    return {
+        "seed": seed,
+        "hops": hops,
+        "nodes": nodes,
+        "edges": edge_rows,
+        "events": related_events(conn, seed, hops=hops, limit=limit),
+    }
+
+
 def graph_nodes(conn: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
     init_graph(conn)
     rows = conn.execute(

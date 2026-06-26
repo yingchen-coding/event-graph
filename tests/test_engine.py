@@ -7,6 +7,7 @@ from event_graph.engine import (
     connect,
     convert_agent_trace_jsonl,
     convert_macos_log_json,
+    explain_subgraph,
     generate_file_events,
     generate_synthetic_events,
     ingest_adapter_events,
@@ -68,6 +69,19 @@ def test_related_events_walks_reverse_edges():
     joined = "\n".join(str(item) for item in events)
     assert "user:alice" in joined
     assert "Malware callback" in joined
+
+
+def test_explain_subgraph_returns_edges_and_event_evidence():
+    conn = connect()
+    load_sample(conn)
+    explanation = explain_subgraph(conn, "domain:bad.example", hops=2, limit=20)
+
+    assert explanation["seed"] == "domain:bad.example"
+    assert explanation["nodes"]
+    assert explanation["edges"]
+    assert explanation["events"]
+    assert "Malware callback" in str(explanation["events"])
+    assert any(edge["dst"] == "domain:bad.example" for edge in explanation["edges"])
 
 
 def test_walk_does_not_confuse_prefix_entities(tmp_path):

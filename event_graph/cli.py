@@ -14,6 +14,7 @@ from .engine import (
     connect,
     convert_agent_trace_jsonl,
     convert_macos_log_json,
+    explain_subgraph,
     export_graph,
     generate_file_events,
     generate_synthetic_events,
@@ -124,6 +125,13 @@ def main(argv: list[str] | None = None) -> int:
     hood.add_argument("--hops", type=int, default=3)
     hood.add_argument("--limit", type=int, default=100)
     hood.set_defaults(func="neighborhood")
+
+    explain = sub.add_parser("explain", help="export nodes, edges, and events around a seed")
+    explain.add_argument("seed")
+    explain.add_argument("--hops", type=int, default=2)
+    explain.add_argument("--limit", type=int, default=100)
+    explain.add_argument("--output", type=Path)
+    explain.set_defaults(func="explain")
 
     add_rel = sub.add_parser("add-edge", help="add a manual relationship overlay")
     add_rel.add_argument("src")
@@ -240,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.func == "neighborhood":
         _print_json(neighborhood(conn, args.seed, args.hops, args.limit))
+    elif args.func == "explain":
+        _emit_json(explain_subgraph(conn, args.seed, args.hops, args.limit), args.output)
     elif args.func == "add_edge":
         _print_json(add_edge(conn, args.src, args.dst, args.rel, note=args.note))
     elif args.func == "remove_edge":
