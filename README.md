@@ -176,7 +176,8 @@ Benchmark:
 
 ```bash
 event-graph --db /tmp/events.duckdb benchmark --rows 1000000 \
-  --seed user:alice --hops 2 --limit 100
+  --seed user:alice --hops 2 --limit 100 \
+  --output /tmp/event-graph-benchmark.json
 ```
 
 10M-row local benchmark on this machine:

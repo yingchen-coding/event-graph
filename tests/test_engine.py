@@ -1,4 +1,4 @@
-from event_graph.cli import _truncate_details
+from event_graph.cli import _emit_json, _truncate_details
 from event_graph.engine import (
     add_edge,
     add_note,
@@ -319,3 +319,9 @@ def test_cli_truncates_long_details_by_default_shape():
     assert truncated[0]["details"] == "x" * 8 + "... [truncated 12 chars]"
     assert rows[0]["details"] == "x" * 20
     assert _truncate_details(rows, 0)[0]["details"] == "x" * 20
+
+
+def test_cli_can_write_json_artifact(tmp_path):
+    output = tmp_path / "nested" / "result.json"
+    _emit_json({"rows": 10, "query_millis": 1.5}, output)
+    assert '"rows": 10' in output.read_text(encoding="utf-8")

@@ -37,6 +37,15 @@ def _print_json(value: object) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False, default=str))
 
 
+def _emit_json(value: object, output: Path | None = None) -> None:
+    if output is None:
+        _print_json(value)
+        return
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(value, indent=2, ensure_ascii=False, default=str) + "\n")
+    _print_json({"output": str(output)})
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Find related events quickly with entity-edge indexes."
@@ -184,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     bench.add_argument("--seed", default="domain:bad.example")
     bench.add_argument("--hops", type=int, default=2)
     bench.add_argument("--limit", type=int, default=100)
+    bench.add_argument("--output", type=Path)
     bench.set_defaults(func="benchmark")
 
     bench_sec = sub.add_parser("benchmark-security", help="benchmark security adapter")
@@ -196,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     bench_sec.add_argument("--seed", default="domain:bad.example")
     bench_sec.add_argument("--hops", type=int, default=2)
     bench_sec.add_argument("--limit", type=int, default=100)
+    bench_sec.add_argument("--output", type=Path)
     bench_sec.set_defaults(func="benchmark_security")
 
     args = parser.parse_args(argv)
@@ -247,9 +258,15 @@ def main(argv: list[str] | None = None) -> int:
         generate_synthetic_logs(args.path, args.rows)
         _print_json({"path": str(args.path), "rows": args.rows})
     elif args.func == "benchmark":
-        _print_json(benchmark_events(conn, args.csv, args.rows, args.seed, args.hops, args.limit))
+        _emit_json(
+            benchmark_events(conn, args.csv, args.rows, args.seed, args.hops, args.limit),
+            args.output,
+        )
     elif args.func == "benchmark_security":
-        _print_json(benchmark(conn, args.csv, args.rows, args.seed, args.hops, args.limit))
+        _emit_json(
+            benchmark(conn, args.csv, args.rows, args.seed, args.hops, args.limit),
+            args.output,
+        )
     elif args.func == "generate_synthetic":
         generate_synthetic_events(args.path, args.rows)
         _print_json({"path": str(args.path), "rows": args.rows})
