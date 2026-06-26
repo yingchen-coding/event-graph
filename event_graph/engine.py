@@ -898,24 +898,25 @@ def neighborhood(
     edge_relation = _walk_edges_sql(conn)
     rows = conn.execute(
         f"""
-        WITH RECURSIVE walk(depth, node, path) AS (
-          SELECT 0, ?::VARCHAR, ?::VARCHAR
+        WITH RECURSIVE walk(depth, node, path, seen) AS (
+          SELECT 0, ?::VARCHAR, ?::VARCHAR, '|' || ?::VARCHAR || '|'
           UNION ALL
           SELECT
             walk.depth + 1,
             graph_edges.dst,
-            walk.path || ' -> ' || graph_edges.dst
+            walk.path || ' -> ' || graph_edges.dst,
+            walk.seen || graph_edges.dst || '|'
           FROM walk
           JOIN ({edge_relation}) AS graph_edges ON graph_edges.src = walk.node
           WHERE walk.depth < ?
-            AND strpos(walk.path, graph_edges.dst) = 0
+            AND strpos(walk.seen, '|' || graph_edges.dst || '|') = 0
         )
         SELECT DISTINCT depth, node, path
         FROM walk
         ORDER BY depth, node
         LIMIT ?
         """,
-        [seed, seed, hops, limit],
+        [seed, seed, seed, hops, limit],
     ).fetchall()
     columns = [item[0] for item in conn.description]
     return [dict(zip(columns, row, strict=False)) for row in rows]
@@ -935,17 +936,17 @@ def related_events(
     order_column = "ts" if _relation_has_column(conn, event_table, "ts") else "event_id"
     rows = conn.execute(
         f"""
-        WITH RECURSIVE related_nodes(depth, node, path) AS (
-          SELECT 0, ?::VARCHAR, ?::VARCHAR
+        WITH RECURSIVE related_nodes(depth, node, seen) AS (
+          SELECT 0, ?::VARCHAR, '|' || ?::VARCHAR || '|'
           UNION
           SELECT
             related_nodes.depth + 1,
             edges.dst,
-            related_nodes.path || ' -> ' || edges.dst
+            related_nodes.seen || edges.dst || '|'
           FROM related_nodes
           JOIN ({edge_relation}) edges ON edges.src = related_nodes.node
           WHERE related_nodes.depth < ?
-            AND strpos(related_nodes.path, edges.dst) = 0
+            AND strpos(related_nodes.seen, '|' || edges.dst || '|') = 0
         ),
         event_hits AS (
           SELECT

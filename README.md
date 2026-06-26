@@ -105,10 +105,10 @@ event-graph --db /tmp/audit.duckdb ingest-adapter audit --source examples/audit_
 event-graph --db /tmp/tickets.duckdb ingest-adapter ticket --source examples/tickets.csv
 ```
 
-Claude-style agent traces can be converted first, then ingested as generic event edges:
+JSONL agent traces can be converted first, then ingested as generic event edges:
 
 ```bash
-event-graph convert-agent-trace --input ~/.claude/projects/.../session.jsonl \
+event-graph convert-agent-trace --input /path/to/session.jsonl \
   --output /tmp/agent-trace.csv
 event-graph --db /tmp/agent-trace.duckdb ingest --events /tmp/agent-trace.csv
 event-graph --db /tmp/agent-trace.duckdb related-events session:SESSION_ID --hops 1

@@ -70,6 +70,28 @@ def test_related_events_walks_reverse_edges():
     assert "Malware callback" in joined
 
 
+def test_walk_does_not_confuse_prefix_entities(tmp_path):
+    path = tmp_path / "events.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "ts,src,dst,rel,details",
+                "2026-01-01T00:00:00Z,user:alice,user:a,delegated,prefix edge",
+                "2026-01-01T00:00:01Z,user:a,ticket:INC-1,opened,target ticket",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    conn = connect()
+    ingest_events(conn, path)
+
+    nodes = neighborhood(conn, "user:alice", hops=2, limit=10)
+    assert "user:a" in {item["node"] for item in nodes}
+    events = related_events(conn, "user:alice", hops=2, limit=10)
+    assert "target ticket" in str(events)
+
+
 def test_generic_events_can_be_indexed(tmp_path):
     path = tmp_path / "events.csv"
     generate_synthetic_events(path, 100)
