@@ -4,8 +4,12 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Event Graph is a fast entity/event index for large logs: ingest millions of records, connect them by
-entities, then jump to the related events without scanning the raw dataset again.
+Find the few events that matter inside millions of connected records without standing up a graph
+database.
+
+Event Graph builds a compact entity/event index for large logs: ingest records, connect them by
+users, hosts, files, sessions, tickets, transactions, or any other entity, then jump to related
+events without scanning the raw dataset again.
 
 It is not a graph visualization tool. It is an indexing pattern:
 
@@ -20,9 +24,9 @@ entities.
 
 ## Star This If
 
-- You need graph-style investigation over logs but do not want to run a graph database first.
-- You have agent traces, audit logs, support tickets, security logs, or product events connected by IDs.
-- You care about ingestion speed, explainable tables, and reproducible local benchmarks.
+- You need to chase one user, IP, session, ticket, file, or transaction through huge logs.
+- You want graph-style investigation over Parquet, CSV, or JSON before deploying a graph database.
+- You care about ingestion speed, explainable tables, and benchmark artifacts you can share.
 
 ## Why This Works
 
