@@ -361,3 +361,48 @@ def test_cli_can_write_json_artifact(tmp_path):
     output = tmp_path / "nested" / "result.json"
     _emit_json({"rows": 10, "query_millis": 1.5}, output)
     assert '"rows": 10' in output.read_text(encoding="utf-8")
+
+
+def test_iter_json_records_handles_all_shapes(tmp_path):
+    import json as _json
+    from event_graph.engine import _iter_json_records
+    cases = {
+        "array.json": (_json.dumps([{"a": 1}, {"b": 2}, "skip", {"c": 3}]), 3),
+        "single.json": (_json.dumps({"a": 1}), 1),
+        "lines.jsonl": ('{"a":1}\n{"b":2}\n\n{"c":3}\n', 3),
+        "garbage_line.jsonl": ('{"a":1}\nNOT JSON\n{"b":2}\n', 2),
+        "pretty_obj.json": ('{\n  "a": 1,\n  "b": [1,2]\n}\n', 1),
+        "pretty_arr.json": ('[\n  {"a":1},\n  {"b":2}\n]\n', 2),
+        "empty.json": ("", 0),
+        "ws.json": ("   \n\n  ", 0),
+        "garbage.txt": ("not json\nreally not", 0),
+    }
+    for name, (content, expect) in cases.items():
+        p = tmp_path / name
+        p.write_text(content, encoding="utf-8")
+        assert len(list(_iter_json_records(p))) == expect, name
+
+
+def test_iter_json_records_streams_jsonl_without_loading_whole_file(tmp_path, monkeypatch):
+    # Regression: the parser used to read_text() the entire file before yielding a record, so a
+    # multi-GB trace would OOM and `limit=` couldn't bound memory. For line-delimited input it must
+    # now stream from the handle — proven here by banning the whole-file read_text().
+    from pathlib import Path
+
+    from event_graph import engine
+
+    big = tmp_path / "trace.jsonl"
+    with big.open("w", encoding="utf-8") as fh:
+        for i in range(5000):
+            fh.write('{"sessionId":"s","timestamp":"t","message":{"role":"user","content":"hi"}}\n')
+
+    original = Path.read_text
+    def _banned(self, *a, **k):
+        if self == big:
+            raise AssertionError("JSONL must be streamed, not read whole into memory")
+        return original(self, *a, **k)
+    monkeypatch.setattr(Path, "read_text", _banned)
+
+    out = tmp_path / "events.csv"
+    result = engine.convert_agent_trace_jsonl(big, out, limit=100)
+    assert result["events"] <= 100  # limit actually bounds work now

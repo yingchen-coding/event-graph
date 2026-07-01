@@ -1150,30 +1150,67 @@ def _sql_literal(value: str) -> str:
 
 
 def _iter_json_records(path: Path) -> Iterable[dict[str, Any]]:
-    text = path.read_text(encoding="utf-8", errors="replace").strip()
-    if not text:
-        return
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        payload = None
-    if isinstance(payload, list):
-        for item in payload:
+    """Yield dict records from a JSON document or a JSON-lines file, streaming where possible.
+
+    macOS `log show --style json` emits one big JSON array; Claude traces and `--style ndjson`
+    emit one JSON object per line. The line-delimited case is streamed straight from the open file
+    handle so a multi-GB trace or a day of logs is never loaded into memory at once — only a single
+    top-level JSON array (which can't be parsed incrementally without a streaming parser) is read
+    whole. A bounded caller (`limit=`) then actually bounds work, instead of paying the full-file
+    load before the first record.
+    """
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        first = ""
+        while True:
+            ch = handle.read(1)
+            if ch == "":
+                return  # empty / whitespace-only
+            if not ch.isspace():
+                first = ch
+                break
+        handle.seek(0)
+
+        if first == "[":
+            # a single JSON array — genuinely one document, must be read whole
+            try:
+                payload = json.loads(handle.read())
+            except json.JSONDecodeError:
+                return
+            if isinstance(payload, list):
+                for item in payload:
+                    if isinstance(item, dict):
+                        yield item
+            return
+
+        # line-delimited (JSONL / ndjson): stream a line at a time at constant memory. Only lines
+        # that never parse are buffered, to recover a single pretty-printed object spanning lines.
+        is_jsonl = False
+        pending: list[str] = []
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                if not is_jsonl:
+                    pending.append(line)
+                continue
             if isinstance(item, dict):
+                is_jsonl = True
                 yield item
-        return
-    if isinstance(payload, dict):
-        yield payload
-        return
-    for line in text.splitlines():
-        if not line.strip():
-            continue
+        if is_jsonl or not pending:
+            return
+        # nothing parsed line-by-line: recover a single multi-line JSON object/array
         try:
-            item = json.loads(line)
+            payload = json.loads("".join(pending))
         except json.JSONDecodeError:
-            continue
-        if isinstance(item, dict):
-            yield item
+            return
+        if isinstance(payload, dict):
+            yield payload
+        elif isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    yield item
 
 
 def _extract_content_text(content: Any) -> str:
