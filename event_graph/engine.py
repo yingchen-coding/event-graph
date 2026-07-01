@@ -1171,46 +1171,59 @@ def _iter_json_records(path: Path) -> Iterable[dict[str, Any]]:
         handle.seek(0)
 
         if first == "[":
-            # a single JSON array — genuinely one document, must be read whole
+            # Most likely a single JSON array (log show --style json). Read it whole — an array
+            # can't be parsed incrementally without a streaming parser. If it does NOT parse as one
+            # document, fall back to line-by-line: a JSONL file can legitimately start with a line
+            # beginning with "[", and dropping every record there would be silent data loss.
+            text = handle.read()
             try:
-                payload = json.loads(handle.read())
+                payload = json.loads(text)
             except json.JSONDecodeError:
-                return
+                payload = None
             if isinstance(payload, list):
                 for item in payload:
                     if isinstance(item, dict):
                         yield item
+                return
+            if isinstance(payload, dict):
+                yield payload
+                return
+            yield from _records_from_lines(text.splitlines(keepends=True))
             return
 
-        # line-delimited (JSONL / ndjson): stream a line at a time at constant memory. Only lines
-        # that never parse are buffered, to recover a single pretty-printed object spanning lines.
-        is_jsonl = False
-        pending: list[str] = []
-        for line in handle:
-            if not line.strip():
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                if not is_jsonl:
-                    pending.append(line)
-                continue
-            if isinstance(item, dict):
-                is_jsonl = True
-                yield item
-        if is_jsonl or not pending:
-            return
-        # nothing parsed line-by-line: recover a single multi-line JSON object/array
+        # line-delimited (JSONL / ndjson): stream straight from the handle at constant memory
+        yield from _records_from_lines(handle)
+
+
+def _records_from_lines(lines: Iterable[str]) -> Iterable[dict[str, Any]]:
+    """Yield dict records from JSON-lines input. Lines that never parse individually are buffered so
+    a single pretty-printed object/array spanning multiple lines can still be recovered."""
+    is_jsonl = False
+    pending: list[str] = []
+    for line in lines:
+        if not line.strip():
+            continue
         try:
-            payload = json.loads("".join(pending))
+            item = json.loads(line)
         except json.JSONDecodeError:
-            return
-        if isinstance(payload, dict):
-            yield payload
-        elif isinstance(payload, list):
-            for item in payload:
-                if isinstance(item, dict):
-                    yield item
+            if not is_jsonl:
+                pending.append(line)
+            continue
+        if isinstance(item, dict):
+            is_jsonl = True
+            yield item
+    if is_jsonl or not pending:
+        return
+    try:
+        payload = json.loads("".join(pending))
+    except json.JSONDecodeError:
+        return
+    if isinstance(payload, dict):
+        yield payload
+    elif isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                yield item
 
 
 def _extract_content_text(content: Any) -> str:

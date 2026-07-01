@@ -377,6 +377,7 @@ def test_iter_json_records_handles_all_shapes(tmp_path):
         "empty.json": ("", 0),
         "ws.json": ("   \n\n  ", 0),
         "garbage.txt": ("not json\nreally not", 0),
+        "array_first_line_jsonl.jsonl": ('[1,2]\n{"a":1}\n{"b":2}\n', 2),
     }
     for name, (content, expect) in cases.items():
         p = tmp_path / name
