@@ -9,3 +9,4 @@ dist/
 *.egg-info/
 *.duckdb
 *.csv.tmp
+scripts/pr_review_check.sh
