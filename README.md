@@ -244,11 +244,6 @@ event-graph --db /tmp/events.duckdb export kuzu-csv /tmp/kuzu
 event-graph --db /tmp/events.duckdb export memgraph-cypher /tmp/memgraph
 ```
 
-## Local Review
-
-```bash
-scripts/pr_review_check.sh
-```
 
 ## What To Build Next
 
