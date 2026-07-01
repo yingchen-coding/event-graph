@@ -250,3 +250,12 @@ event-graph --db /tmp/events.duckdb export memgraph-cypher /tmp/memgraph
 - Iceberg catalog integration.
 - Streaming ingest service around the append APIs.
 - Larger real-world public datasets for reproducible launch benchmarks.
+
+## Local Review Gate
+
+```bash
+scripts/pr_review_check.sh
+```
+
+This runs compile checks, tests, Ruff when available, secret scanning, and commit-history
+attribution checks. GitHub runs the same gate through the `PR Review Gate` workflow.
