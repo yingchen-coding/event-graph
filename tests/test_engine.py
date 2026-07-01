@@ -365,6 +365,7 @@ def test_cli_can_write_json_artifact(tmp_path):
 
 def test_iter_json_records_handles_all_shapes(tmp_path):
     import json as _json
+
     from event_graph.engine import _iter_json_records
     cases = {
         "array.json": (_json.dumps([{"a": 1}, {"b": 2}, "skip", {"c": 3}]), 3),
@@ -393,7 +394,7 @@ def test_iter_json_records_streams_jsonl_without_loading_whole_file(tmp_path, mo
 
     big = tmp_path / "trace.jsonl"
     with big.open("w", encoding="utf-8") as fh:
-        for i in range(5000):
+        for _ in range(5000):
             fh.write('{"sessionId":"s","timestamp":"t","message":{"role":"user","content":"hi"}}\n')
 
     original = Path.read_text
