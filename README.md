@@ -4,6 +4,8 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+![event-graph — your logs, as a queryable graph](assets/demo.svg)
+
 Find the few events that matter inside millions of connected records without standing up a graph
 database.
 

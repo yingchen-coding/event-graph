@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="298" viewBox="0 0 780 298" role="img" aria-label="event-graph — your logs, as a queryable graph">
+  <rect width="780" height="298" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <rect width="780" height="40" rx="10" fill="#161b22"/>
+  <rect y="30" width="780" height="10" fill="#161b22"/>
+  <circle cx="18" cy="20" r="6" fill="#ff5f56"/><circle cx="38" cy="20" r="6" fill="#ffbd2e"/><circle cx="58" cy="20" r="6" fill="#27c93f"/>
+  <text x="390" y="24" fill="#8b949e" font-family="monospace" font-size="12" text-anchor="middle">event-graph — your logs, as a queryable graph</text>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5">
+    <text x="22" y="58" fill="#e6edf3" xml:space="preserve">$ event-graph convert-macos-log --input log.json --output events.csv</text><text x="22" y="80" fill="#e6edf3" xml:space="preserve">$ event-graph --db g.duckdb ingest --events events.csv</text><text x="22" y="102" fill="#3fb950" xml:space="preserve">  ingested 100,000 events  →  processes · files · sockets · agents</text><text x="22" y="146" fill="#e6edf3" xml:space="preserve">$ event-graph --db g.duckdb related --seed process:curl --hops 2</text><text x="22" y="168" fill="#f85149" xml:space="preserve">  curl → wrote /tmp/x.sh → bash ran it → connected 4 external IPs</text><text x="22" y="212" fill="#e6edf3" xml:space="preserve">$ event-graph --db g.duckdb malware-hits</text><text x="22" y="234" fill="#3fb950" xml:space="preserve">  3 pipe-to-shell · 1 reverse-shell · 0 false positives</text><text x="22" y="256" fill="#8b949e" xml:space="preserve">  # one query surfaces the whole chain, not a single alert</text>
+  </g>
+</svg>
